@@ -56,6 +56,11 @@ jobs:
         working-directory: transformerpro
         run: npx cap sync android
 
+      - name: Fix Kotlin duplicados
+        working-directory: transformerpro/android
+        run: |
+          sed -i "s/dependencies {/dependencies {\n    constraints {\n        implementation(\"org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22\") { because(\"fix duplicates\") }\n        implementation(\"org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22\") { because(\"fix duplicates\") }\n    }/" app/build.gradle
+
       - name: Permisos Gradle
         working-directory: transformerpro
         run: chmod +x android/gradlew
