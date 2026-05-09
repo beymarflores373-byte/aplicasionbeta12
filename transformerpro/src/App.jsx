@@ -280,15 +280,18 @@ export default function TransformerPro() {
         doc.text('Pagina ' + i + ' de ' + pageCount, W - margin, 287, { align: 'right' });
       }
 
-      const pdfBlob = doc.output('blob');
-const url = URL.createObjectURL(pdfBlob);
-const a = document.createElement('a');
-a.href = url;
-a.download = 'Memoria_Tecnica_' + (project.name || 'Proyecto') + '.pdf';
-document.body.appendChild(a);
-a.click();
-document.body.removeChild(a);
-URL.revokeObjectURL(url);
+const pdfBase64 = doc.output('datauristring');
+const newWindow = window.open();
+if (newWindow) {
+  newWindow.document.write(
+    '<iframe width="100%" height="100%" src="' + pdfBase64 + '"></iframe>'
+  );
+} else {
+  const a = document.createElement('a');
+  a.href = pdfBase64;
+  a.download = 'Memoria_Tecnica_' + (project.name || 'Proyecto') + '.pdf';
+  a.click();
+}
       setIsGeneratingPdf(false);
     } catch (err) {
       console.error('Error PDF:', err);
