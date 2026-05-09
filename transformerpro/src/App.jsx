@@ -1,0 +1,535 @@
+import React, { useState, useMemo, useCallback } from 'react';
+import { 
+  FileText, Zap, Box, Activity, Shield, Printer, 
+  Plus, Trash2, Moon, Sun, AlertTriangle, CheckCircle, ChevronRight, BarChart3, Info, User
+} from 'lucide-react';
+
+const STANDARD_KVA = [15, 25, 37.5, 50, 75, 100, 150, 167, 250, 333, 500, 750, 1000, 1500, 2000, 2500];
+const SOIL_TYPES = [
+  { name: 'Tierra húmeda / Pantanosa', rho: 30 },
+  { name: 'Arcilla / Tierra de cultivo', rho: 50 },
+  { name: 'Arena húmeda', rho: 200 },
+  { name: 'Arena seca', rho: 1000 },
+  { name: 'Grava / Suelo pedregoso', rho: 3000 },
+  { name: 'Roca', rho: 10000 },
+];
+
+const FormInput = ({ label, type = "text", value, onChange, placeholder, suffix, step }) => (
+  <div className="flex flex-col mb-4">
+    <label className="mb-1 text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{label}</label>
+    <div className="relative">
+      <input 
+        type={type} 
+        step={step}
+        value={value === null || value === undefined ? '' : value} 
+        onChange={onChange} 
+        placeholder={placeholder}
+        className="w-full px-4 py-2.5 border rounded-xl bg-gray-50 dark:bg-gray-800 dark:border-gray-700 focus:ring-2 focus:ring-blue-500 outline-none transition-all text-gray-900 dark:text-gray-100 shadow-sm"
+      />
+      {suffix && <span className="absolute right-4 top-2.5 text-gray-400 font-medium">{suffix}</span>}
+    </div>
+  </div>
+);
+
+const FormSelect = ({ label, value, onChange, options }) => (
+  <div className="flex flex-col mb-4">
+    <label className="mb-1 text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{label}</label>
+    <select 
+      value={value} 
+      onChange={onChange}
+      className="w-full px-4 py-2.5 border rounded-xl bg-gray-50 dark:bg-gray-800 dark:border-gray-700 focus:ring-2 focus:ring-blue-500 outline-none transition-all text-gray-900 dark:text-gray-100 shadow-sm appearance-none"
+    >
+      {options.map((opt, i) => (
+        <option key={i} value={opt.hasOwnProperty('value') ? opt.value : opt}>
+          {opt.label || opt}
+        </option>
+      ))}
+    </select>
+  </div>
+);
+
+const SectionCard = ({ children, title, icon: Icon, className = "" }) => (
+  <div className={`bg-white dark:bg-gray-900 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-800 p-6 mb-6 print:shadow-none print:border-none print:p-0 print:mb-8 ${className}`}>
+    {title && (
+      <div className="flex items-center gap-3 mb-6 pb-3 border-b border-gray-50 dark:border-gray-800 print:mb-4">
+        <div className="p-2 bg-blue-50 dark:bg-blue-900/30 rounded-lg print:hidden">
+          {Icon && <Icon className="w-5 h-5 text-blue-600 dark:text-blue-400" />}
+        </div>
+        <h2 className="text-xl font-bold text-gray-800 dark:text-gray-100 print:text-blue-800">{title}</h2>
+      </div>
+    )}
+    {children}
+  </div>
+);
+
+export default function TransformerPro() {
+  const [darkMode, setDarkMode] = useState(false);
+  const [activeTab, setActiveTab] = useState('proyecto');
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+
+  const [project, setProject] = useState({
+    name: '', owner: '', type: 'Industrial', location: '',
+    voltageAT: 24.9, voltageBT: 380, phase: 'Trifásico', freq: 50,
+    norm: 'NB 777 (Bolivia)'
+  });
+
+  const [loads, setLoads] = useState([]);
+  const [newLoad, setNewLoad] = useState({
+    category: 'Iluminación', name: '', qty: 1, power: 0, unit: 'kW', demandFactor: 0.8, powerFactor: 0.9
+  });
+
+  const [settings, setSettings] = useState({
+    reserveFactor: 20, soilRho: 50, rodLength: 2.4, rodDiameterInches: 0.625, normTierra: 'NB 777 (R < 10Ω)'
+  });
+
+  const calculations = useMemo(() => {
+    let totalKw = 0;
+    let maxDemandKw = 0;
+    let maxDemandKvar = 0;
+
+    loads.forEach(load => {
+      let pKw = Number(load.power) || 0;
+      if (load.unit === 'W') pKw = pKw / 1000;
+      if (load.unit === 'HP') pKw = pKw * 0.746;
+      const qty = Number(load.qty) || 0;
+      const df = Number(load.demandFactor) || 0;
+      const pf = Number(load.powerFactor) || 1;
+      const activeP = pKw * qty;
+      const demandP = activeP * df;
+      const angle = Math.acos(Math.min(Math.max(pf, 0.1), 1));
+      const reactiveP = demandP * Math.tan(angle);
+      totalKw += activeP;
+      maxDemandKw += demandP;
+      maxDemandKvar += reactiveP;
+    });
+
+    const totalKva = Math.sqrt(Math.pow(maxDemandKw, 2) + Math.pow(maxDemandKvar, 2));
+    const globalPf = totalKva > 0 ? maxDemandKw / totalKva : 0;
+    const requiredKva = totalKva * (1 + (Number(settings.reserveFactor) || 0) / 100);
+    const selectedKva = STANDARD_KVA.find(k => k >= requiredKva) || STANDARD_KVA[STANDARD_KVA.length - 1];
+    const root3 = project.phase === 'Trifásico' ? Math.sqrt(3) : 1;
+    const vAT = (Number(project.voltageAT) || 1) * 1000;
+    const vBT = Number(project.voltageBT) || 1;
+    const currentAT = (selectedKva * 1000) / (root3 * vAT);
+    const currentBT = (selectedKva * 1000) / (root3 * vBT);
+    const impedanceZ = selectedKva <= 630 ? 4.0 : 6.0;
+    const iccBT = currentBT / (impedanceZ / 100);
+    let trafoType = 'Distribución en aceite (ONAN)';
+    if (['Hospitalario', 'Comercial'].includes(project.type)) trafoType = 'Seco encapsulado (Resina Epoxi)';
+    const L = Number(settings.rodLength) || 2.4;
+    const diamInches = Number(settings.rodDiameterInches) || 0.625;
+    const d = diamInches * 0.0254;
+    const rho = Number(settings.soilRho) || 50;
+    const rTierra = (rho / (2 * Math.PI * L)) * (Math.log((4 * L) / d) - 1);
+
+    return { totalKw, maxDemandKw, maxDemandKvar, totalKva, globalPf, requiredKva, selectedKva, currentAT, currentBT, impedanceZ, iccBT, rTierra, trafoType, L, d, rho };
+  }, [loads, settings, project]);
+
+  const handleAddLoad = () => {
+    if (!newLoad.name || Number(newLoad.power) <= 0) return;
+    setLoads([...loads, { ...newLoad, id: Date.now() }]);
+    setNewLoad({ ...newLoad, name: '', power: 0, category: 'Iluminación', qty: 1, unit: 'kW', demandFactor: 0.8, powerFactor: 0.9 });
+  };
+
+  const handleNumericChange = useCallback((setter, field) => (e) => {
+    const val = e.target.value;
+    setter(prev => ({ ...prev, [field]: val === '' ? '' : parseFloat(val) }));
+  }, []);
+
+  const handlePrint = () => {
+    setActiveTab('reporte');
+    setIsGeneratingPdf(true);
+    setTimeout(() => {
+      const element = document.getElementById('report-area');
+      if (window.html2pdf) {
+        executePDFGeneration(element);
+      } else {
+        const script = document.createElement('script');
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
+        script.onload = () => executePDFGeneration(element);
+        script.onerror = () => { window.print(); setIsGeneratingPdf(false); };
+        document.body.appendChild(script);
+      }
+    }, 1000);
+  };
+
+  const executePDFGeneration = (element) => {
+    const wasDark = document.documentElement.classList.contains('dark');
+    if (wasDark) document.documentElement.classList.remove('dark');
+    const noPrintElements = document.querySelectorAll('.no-print');
+    noPrintElements.forEach(el => el.style.display = 'none');
+    const printOnlyElements = document.querySelectorAll('.print-only');
+    printOnlyElements.forEach(el => el.style.display = 'block');
+    const originalWidth = element.style.width;
+    element.style.width = '1024px';
+    element.style.maxWidth = '1024px';
+    const opt = {
+      margin: [10, 10, 15, 10],
+      filename: `Memoria_Tecnica_${project.name || 'Proyecto'}.pdf`,
+      image: { type: 'jpeg', quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true, windowWidth: 1024, backgroundColor: '#ffffff' },
+      jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' },
+      pagebreak: { mode: ['css', 'legacy'], before: '.page-break', avoid: '.avoid-break' }
+    };
+    window.html2pdf().set(opt).from(element).save().then(() => {
+      noPrintElements.forEach(el => el.style.display = '');
+      printOnlyElements.forEach(el => el.style.display = 'none');
+      element.style.width = originalWidth;
+      element.style.maxWidth = '';
+      if (wasDark) document.documentElement.classList.add('dark');
+      setIsGeneratingPdf(false);
+    }).catch(err => {
+      console.error("Error PDF:", err);
+      noPrintElements.forEach(el => el.style.display = '');
+      printOnlyElements.forEach(el => el.style.display = 'none');
+      element.style.width = originalWidth;
+      element.style.maxWidth = '';
+      if (wasDark) document.documentElement.classList.add('dark');
+      setIsGeneratingPdf(false);
+      window.print();
+    });
+  };
+
+  return (
+    <div className={`min-h-screen ${darkMode ? 'dark bg-gray-950' : 'bg-slate-50'} text-gray-900 dark:text-gray-100 font-sans transition-colors duration-300`}>
+      <style>{`
+        .print-only { display: none; }
+        @media print {
+          @page { size: letter; margin: 10mm; }
+          body { background: white !important; color: black !important; }
+          .no-print { display: none !important; }
+          .print-block { display: block !important; width: 100% !important; margin: 0 !important; padding: 0 !important; }
+          .page-break { page-break-before: always !important; padding-top: 20px; }
+          .avoid-break { page-break-inside: avoid !important; break-inside: avoid !important; }
+          .print-only { display: block !important; }
+          * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+        }
+      `}</style>
+
+      <header className="bg-white dark:bg-gray-900 border-b border-gray-100 dark:border-gray-800 px-6 py-4 flex justify-between items-center sticky top-0 z-30 no-print">
+        <div className="flex items-center gap-3">
+          <div className="bg-blue-600 p-2 rounded-xl shadow-lg shadow-blue-500/30">
+            <Zap className="w-6 h-6 text-white" />
+          </div>
+          <h1 className="text-xl font-black tracking-tight text-gray-900 dark:text-white">Transformer<span className="text-blue-600">Pro</span></h1>
+        </div>
+        <button onClick={() => setDarkMode(!darkMode)} className="p-2.5 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+          {darkMode ? <Sun className="w-5 h-5 text-yellow-400" /> : <Moon className="w-5 h-5 text-gray-500" />}
+        </button>
+      </header>
+
+      <div className="max-w-7xl mx-auto flex flex-col md:flex-row gap-8 p-6 print:p-0 print:block">
+        
+        <nav className="no-print w-full md:w-64 space-y-1">
+          {[
+            { id: 'proyecto', icon: FileText, label: 'Datos Proyecto' },
+            { id: 'cargas', icon: Zap, label: 'Planilla de Cargas' },
+            { id: 'trafo', icon: Box, label: 'Transformador' },
+            { id: 'tierra', icon: Activity, label: 'Puesta a Tierra' },
+            { id: 'protecciones', icon: Shield, label: 'Protecciones' },
+            { id: 'info', icon: Info, label: 'Información de Aplicación' },
+            { id: 'reporte', icon: Printer, label: 'Generar Reporte' },
+          ].map(tab => (
+            <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+              className={`w-full flex items-center justify-between px-4 py-3.5 rounded-2xl transition-all ${
+                activeTab === tab.id ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20 font-bold' : 'text-gray-500 hover:bg-white dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white'
+              }`}>
+              <div className="flex items-center gap-3"><tab.icon className="w-5 h-5" /><span>{tab.label}</span></div>
+              {activeTab === tab.id && <ChevronRight className="w-4 h-4" />}
+            </button>
+          ))}
+        </nav>
+
+        <main id="report-area" className="flex-1 print-block">
+
+          <div className="print-only mb-8 border-b-4 border-blue-600 pb-4">
+            <div className="flex justify-between items-end">
+              <div>
+                <h1 className="text-3xl font-black text-gray-900">Transformer<span className="text-blue-600">Pro</span></h1>
+                <p className="text-sm font-bold text-gray-500 uppercase tracking-widest mt-1">Memoria Técnica de Diseño Eléctrico</p>
+              </div>
+              <div className="text-right">
+                <p className="text-lg font-bold text-gray-800">{project.name || 'Proyecto Sin Nombre'}</p>
+                <p className="text-xs text-gray-500 font-medium">Fecha de generación: {new Date().toLocaleDateString()}</p>
+              </div>
+            </div>
+          </div>
+
+          {(activeTab === 'proyecto' || activeTab === 'reporte') && (
+            <SectionCard title="Datos Generales del Proyecto" icon={FileText} className="avoid-break">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6">
+                <FormInput label="Nombre del Proyecto" value={project.name} onChange={e => setProject({...project, name: e.target.value})} placeholder="Ej. Urbanización Los Olivos" />
+                <FormInput label="Propietario / Cliente" value={project.owner} onChange={e => setProject({...project, owner: e.target.value})} />
+                <FormSelect label="Tipo de Instalación" value={project.type} onChange={e => setProject({...project, type: e.target.value})} options={['Residencial', 'Comercial', 'Industrial', 'Hospitalario', 'Otro']} />
+                <FormInput label="Ubicación" value={project.location} onChange={e => setProject({...project, location: e.target.value})} />
+                <FormSelect label="Norma de Referencia" value={project.norm} onChange={e => setProject({...project, norm: e.target.value})} options={['NB 777 (Bolivia)', 'IEC 60364', 'NEC / NFPA 70']} />
+                <div className="grid grid-cols-2 gap-4">
+                  <FormSelect label="Media Tensión (kV)" value={project.voltageAT} onChange={e => setProject({...project, voltageAT: parseFloat(e.target.value)})} options={[{label:'10 kV', value:10}, {label:'13.2 kV', value:13.2}, {label:'24.9 kV', value:24.9}, {label:'34.5 kV', value:34.5}]} />
+                  <FormSelect label="Baja Tensión (V)" value={project.voltageBT} onChange={e => setProject({...project, voltageBT: parseFloat(e.target.value)})} options={[{label:'220 V', value:220}, {label:'380 V', value:380}, {label:'440 V', value:440}]} />
+                </div>
+              </div>
+            </SectionCard>
+          )}
+
+          {(activeTab === 'cargas' || activeTab === 'reporte') && (
+            <SectionCard title="Planilla de Carga y Resumen de Potencias" icon={Zap} className="page-break">
+              <div className="no-print bg-slate-50 dark:bg-gray-800/50 p-6 rounded-3xl mb-8 border border-gray-100 dark:border-gray-700">
+                <h3 className="text-xs font-black mb-4 text-gray-400 uppercase tracking-widest">Añadir Nueva Carga</h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <FormSelect label="Categoría" value={newLoad.category} onChange={e => setNewLoad({...newLoad, category: e.target.value})} options={['Iluminación', 'Tomacorrientes', 'Fuerza Motriz', 'Climatización', 'Especiales']} />
+                  <FormInput label="Descripción" value={newLoad.name} onChange={e => setNewLoad({...newLoad, name: e.target.value})} />
+                  <FormInput label="Cantidad" type="number" value={newLoad.qty} onChange={handleNumericChange(setNewLoad, 'qty')} />
+                  <div className="flex gap-2">
+                    <FormInput label="Potencia" type="number" value={newLoad.power} onChange={handleNumericChange(setNewLoad, 'power')} />
+                    <FormSelect label="Und." value={newLoad.unit} onChange={e => setNewLoad({...newLoad, unit: e.target.value})} options={['kW', 'W', 'HP']} />
+                  </div>
+                  <FormInput label="F. Demanda" type="number" step="0.1" value={newLoad.demandFactor} onChange={handleNumericChange(setNewLoad, 'demandFactor')} />
+                  <FormInput label="F. Potencia" type="number" step="0.1" value={newLoad.powerFactor} onChange={handleNumericChange(setNewLoad, 'powerFactor')} />
+                  <div className="col-span-2 flex items-end mb-4">
+                    <button onClick={handleAddLoad} className="w-full h-[46px] bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-all">
+                      <Plus className="w-5 h-5" /> Añadir Carga
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div className="overflow-x-auto border border-gray-100 dark:border-gray-800 rounded-2xl mb-8 avoid-break">
+                <table className="w-full text-left border-collapse">
+                  <thead className="bg-gray-50 dark:bg-gray-800 text-[10px] uppercase font-black text-gray-500 tracking-widest border-b border-gray-200 dark:border-gray-700">
+                    <tr>
+                      <th className="px-4 py-4">Descripción</th>
+                      <th className="px-4 py-4 text-center w-20">Cant.</th>
+                      <th className="px-4 py-4 text-right">Potencia U.</th>
+                      <th className="px-4 py-4 text-center">F.D.</th>
+                      <th className="px-4 py-4 text-center">F.P.</th>
+                      <th className="px-4 py-4 text-right text-blue-600">Demanda (kW)</th>
+                      <th className="px-4 py-4 text-center no-print">Eliminar</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
+                    {loads.length === 0 ? (
+                      <tr><td colSpan="7" className="text-center py-6 text-gray-500 italic">No hay cargas registradas.</td></tr>
+                    ) : loads.map(load => {
+                      let pKw = Number(load.power) || 0;
+                      if (load.unit === 'W') pKw /= 1000;
+                      if (load.unit === 'HP') pKw *= 0.746;
+                      const dem = pKw * (Number(load.qty) || 0) * (Number(load.demandFactor) || 0);
+                      return (
+                        <tr key={load.id} className="text-sm hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors avoid-break">
+                          <td className="px-4 py-4 font-bold">{load.name} <span className="block text-xs font-normal text-gray-500">{load.category}</span></td>
+                          <td className="px-4 py-4 text-center">{load.qty}</td>
+                          <td className="px-4 py-4 text-right">{load.power} {load.unit}</td>
+                          <td className="px-4 py-4 text-center">{load.demandFactor}</td>
+                          <td className="px-4 py-4 text-center">{load.powerFactor}</td>
+                          <td className="px-4 py-4 text-right font-black text-blue-600">{dem.toFixed(2)} kW</td>
+                          <td className="px-4 py-4 text-center no-print">
+                            <button onClick={() => setLoads(loads.filter(l => l.id !== load.id))} className="text-red-400 hover:text-red-600 p-2"><Trash2 className="w-4 h-4" /></button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div className="bg-slate-50 dark:bg-gray-800/80 rounded-3xl p-6 border-2 border-blue-100 dark:border-blue-900/30 avoid-break">
+                <div className="flex items-center gap-2 mb-6"><BarChart3 className="w-5 h-5 text-blue-600" /><h3 className="text-lg font-black uppercase tracking-tight">Cuadro: Resumen de Potencias del Sistema</h3></div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  <div className="bg-white dark:bg-gray-900 p-5 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-sm">
+                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Potencia Instalada (Pi)</p>
+                    <p className="text-2xl font-black text-gray-900 dark:text-white">{calculations.totalKw.toFixed(2)} <span className="text-sm font-bold">kW (Activa)</span></p>
+                  </div>
+                  <div className="bg-white dark:bg-gray-900 p-5 rounded-2xl border border-blue-200 dark:border-blue-800 shadow-sm">
+                    <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest mb-1">Demanda Máxima (Pdm)</p>
+                    <p className="text-2xl font-black text-blue-600">{calculations.maxDemandKw.toFixed(2)} <span className="text-sm font-bold">kW (Activa)</span></p>
+                  </div>
+                  <div className="bg-white dark:bg-gray-900 p-5 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-sm">
+                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Demanda Máxima (Qdm)</p>
+                    <p className="text-2xl font-black text-indigo-500">{calculations.maxDemandKvar.toFixed(2)} <span className="text-sm font-bold">kVAR (Reactiva)</span></p>
+                  </div>
+                  <div className="bg-gradient-to-br from-blue-600 to-indigo-700 p-5 rounded-2xl shadow-lg lg:col-span-2">
+                    <p className="text-[10px] font-black text-white/70 uppercase tracking-widest mb-1">Potencia Aparente Total (S)</p>
+                    <p className="text-3xl font-black text-white">{calculations.totalKva.toFixed(2)} kVA</p>
+                  </div>
+                  <div className="bg-emerald-50 dark:bg-emerald-950/30 p-5 rounded-2xl border border-emerald-200 dark:border-emerald-800 shadow-sm flex flex-col justify-center text-center">
+                    <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest mb-1">Factor de Potencia Global</p>
+                    <p className="text-3xl font-black text-emerald-600">{calculations.globalPf.toFixed(3)}</p>
+                  </div>
+                </div>
+              </div>
+            </SectionCard>
+          )}
+
+          {(activeTab === 'trafo' || activeTab === 'reporte') && (
+            <SectionCard title="Dimensionamiento del Transformador" icon={Box} className="page-break avoid-break">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div className="space-y-4">
+                  <h3 className="text-sm font-black text-blue-600 mb-4 uppercase tracking-widest border-b border-gray-100 dark:border-gray-800 pb-2">Parámetros Técnicos</h3>
+                  <FormInput label="Factor de Reserva (%)" type="number" value={settings.reserveFactor} onChange={handleNumericChange(setSettings, 'reserveFactor')} suffix="%" />
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="p-4 bg-gray-50 dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700">
+                      <p className="text-[10px] font-bold text-gray-400 uppercase">Corriente Nom. AT</p>
+                      <p className="text-xl font-black">{calculations.currentAT.toFixed(2)} A</p>
+                    </div>
+                    <div className="p-4 bg-gray-50 dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700">
+                      <p className="text-[10px] font-bold text-gray-400 uppercase">Corriente Nom. BT</p>
+                      <p className="text-xl font-black">{calculations.currentBT.toFixed(2)} A</p>
+                    </div>
+                  </div>
+                  <div className="flex justify-between items-center p-4 bg-slate-50 dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
+                    <span className="text-xs font-bold text-gray-500 uppercase">Impedancia Z% / Icc kA</span>
+                    <span className="font-black">{calculations.impedanceZ}% / {(calculations.iccBT / 1000).toFixed(2)} kA</span>
+                  </div>
+                </div>
+                <div className="bg-gradient-to-br from-blue-700 to-indigo-900 text-white p-8 rounded-3xl shadow-xl flex flex-col justify-center">
+                  <p className="text-[10px] font-black uppercase tracking-widest opacity-80 mb-1">Transformador Seleccionado</p>
+                  <p className="text-sm font-bold bg-white/20 px-3 py-1 rounded-lg inline-block mb-4 border border-white/20">{calculations.trafoType}</p>
+                  <h2 className="text-7xl font-black mb-2">{calculations.selectedKva} <span className="text-3xl">kVA</span></h2>
+                  <p className="text-sm font-medium opacity-90">Potencia Normalizada Estandarizada</p>
+                </div>
+              </div>
+            </SectionCard>
+          )}
+
+          {(activeTab === 'tierra' || activeTab === 'reporte') && (
+            <SectionCard title="Sistema de Puesta a Tierra" icon={Activity} className="page-break avoid-break">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+                <div className="space-y-4">
+                  <h3 className="text-sm font-black text-blue-600 mb-4 uppercase tracking-widest border-b border-gray-100 dark:border-gray-800 pb-2">Parámetros del Electrodo y Suelo</h3>
+                  <FormSelect label="Normativa Aplicada" value={settings.normTierra} onChange={e => setSettings({...settings, normTierra: e.target.value})} options={['NB 777 (R < 10Ω)', 'IEEE 80', 'IEC 60364']} />
+                  <div className="no-print">
+                    <FormSelect label="Tipo de Suelo (Referencia)" value={settings.soilRho} onChange={e => setSettings({...settings, soilRho: parseFloat(e.target.value)})} options={SOIL_TYPES.map(s => ({ label: `${s.name} (≈ ${s.rho} Ω·m)`, value: s.rho }))} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <FormInput label="Resistividad Exacta (Ω·m)" type="number" value={settings.soilRho} onChange={handleNumericChange(setSettings, 'soilRho')} />
+                    <FormInput label="Long. Jabalina (m)" type="number" value={settings.rodLength} onChange={handleNumericChange(setSettings, 'rodLength')} />
+                  </div>
+                  <FormSelect label="Diámetro Jabalina (Pulgadas)" value={settings.rodDiameterInches} onChange={e => setSettings({...settings, rodDiameterInches: parseFloat(e.target.value)})}
+                    options={[{ label: '1/2" (Media pulgada)', value: 0.5 }, { label: '5/8" (Cinco octavos)', value: 0.625 }, { label: '3/4" (Tres cuartos)', value: 0.75 }, { label: '1" (Una pulgada)', value: 1.0 }]} />
+                </div>
+                <div className="flex flex-col justify-center items-center">
+                  <div className={`p-10 rounded-full border-8 text-center transition-all ${calculations.rTierra <= 10 ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/10' : 'border-red-500 bg-red-50 dark:bg-red-900/10'}`}>
+                    <p className="text-xs font-black uppercase text-gray-400 mb-1">Resistencia Calculada</p>
+                    <h2 className="text-6xl font-black">{calculations.rTierra.toFixed(2)} Ω</h2>
+                  </div>
+                  <div className={`mt-6 px-6 py-2 rounded-2xl font-black text-sm flex items-center gap-2 ${calculations.rTierra <= 10 ? 'bg-emerald-500 text-white' : 'bg-red-500 text-white'}`}>
+                    {calculations.rTierra <= 10 ? <CheckCircle className="w-5 h-5"/> : <AlertTriangle className="w-5 h-5"/>}
+                    {calculations.rTierra <= 10 ? 'CUMPLE NORMA' : 'NO CUMPLE'}
+                  </div>
+                  <div className="w-full bg-gray-50 dark:bg-gray-800 p-6 rounded-3xl border border-gray-200 dark:border-gray-700 text-sm mt-8 text-left">
+                    <p className="font-black uppercase tracking-widest text-xs text-gray-500 mb-3">Criterio Normativo (NB 777 / IEC 60364):</p>
+                    <ul className="list-disc pl-5 space-y-2 text-gray-600 dark:text-gray-300 font-medium">
+                      <li><strong>R ≤ 10 Ω</strong>: Instalaciones generales en Baja Tensión.</li>
+                      <li><strong>R ≤ 5 Ω</strong>: Instalaciones especiales, Hospitales o Data Centers.</li>
+                      <li><strong>R ≤ 1 Ω</strong>: Subestaciones de potencia.</li>
+                    </ul>
+                    {calculations.rTierra > 10 && (
+                      <div className="mt-4 p-3 bg-red-100 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-xl">
+                        <p className="text-red-700 dark:text-red-400 font-bold text-xs">* Nota: Se requiere tratamiento químico del suelo (Bentonita, Thor-Gel) o configuración en malla/múltiples jabalinas.</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </SectionCard>
+          )}
+
+          {(activeTab === 'protecciones' || activeTab === 'reporte') && (
+            <SectionCard title="Criterios de Protección AT/BT" icon={Shield} className="page-break avoid-break">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div className="border-2 border-red-100 dark:border-red-900/30 rounded-3xl overflow-hidden">
+                  <div className="bg-red-50 dark:bg-red-900/20 px-6 py-4 border-b border-red-100 dark:border-red-900/30 flex items-center gap-3">
+                    <div className="p-2 bg-red-100 dark:bg-red-900/30 rounded-lg"><Zap className="w-5 h-5 text-red-600"/></div>
+                    <h3 className="font-black text-sm uppercase tracking-widest text-red-800 dark:text-red-400">Media / Alta Tensión (AT)</h3>
+                  </div>
+                  <div className="p-6 space-y-6 bg-white dark:bg-gray-900">
+                    <div>
+                      <p className="text-xs font-bold text-gray-400 uppercase mb-1">Corriente Nominal AT</p>
+                      <p className="font-black text-2xl">{calculations.currentAT.toFixed(2)} A</p>
+                    </div>
+                    <div className="border-t border-gray-100 dark:border-gray-800 pt-4">
+                      <p className="text-xs font-bold text-gray-400 uppercase mb-1">Fusibles tipo Expulsión (In * 1.5)</p>
+                      <p className="font-black text-2xl text-red-600 dark:text-red-400">{(calculations.currentAT * 1.5).toFixed(1)} A</p>
+                      <p className="text-[10px] text-gray-500 mt-1">Normalizar al valor comercial superior inmediato.</p>
+                    </div>
+                    <div className="border-t border-gray-100 dark:border-gray-800 pt-4">
+                      <p className="text-xs font-bold text-gray-400 uppercase mb-1">Descargadores / Pararrayos</p>
+                      <p className="font-black text-2xl">{(Number(project.voltageAT) * 1.2).toFixed(1)} kV</p>
+                    </div>
+                  </div>
+                </div>
+                <div className="border-2 border-blue-100 dark:border-blue-900/30 rounded-3xl overflow-hidden">
+                  <div className="bg-blue-50 dark:bg-blue-900/20 px-6 py-4 border-b border-blue-100 dark:border-blue-900/30 flex items-center gap-3">
+                    <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg"><Shield className="w-5 h-5 text-blue-600"/></div>
+                    <h3 className="font-black text-sm uppercase tracking-widest text-blue-800 dark:text-blue-400">Tablero General Baja Tensión (TGBT)</h3>
+                  </div>
+                  <div className="p-6 space-y-6 bg-white dark:bg-gray-900">
+                    <div>
+                      <p className="text-xs font-bold text-gray-400 uppercase mb-1">Corriente Nominal BT</p>
+                      <p className="font-black text-2xl">{calculations.currentBT.toFixed(2)} A</p>
+                    </div>
+                    <div className="border-t border-gray-100 dark:border-gray-800 pt-4">
+                      <p className="text-xs font-bold text-gray-400 uppercase mb-1">Interruptor General (Breaker Principal)</p>
+                      <p className="font-black text-3xl text-blue-600 dark:text-blue-400">{(calculations.currentBT * 1.25).toFixed(0)} A</p>
+                      <p className="text-[10px] text-gray-500 mt-1">Capacidad ajustada al 125% (Norma térmica).</p>
+                    </div>
+                    <div className="border-t border-gray-100 dark:border-gray-800 pt-4">
+                      <p className="text-xs font-bold text-gray-400 uppercase mb-1">Nivel de Cortocircuito en Bornes (Icc)</p>
+                      <p className="font-black text-2xl">{(calculations.iccBT / 1000).toFixed(2)} kA</p>
+                      <p className="text-xs font-bold text-orange-600 dark:text-orange-400 mt-2 flex items-start gap-2">
+                        <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                        <span>Capacidad de Ruptura (Pdc) mínima recomendada:<br/><strong>&gt; {Math.ceil(calculations.iccBT / 1000)} kA</strong></span>
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </SectionCard>
+          )}
+
+          {activeTab === 'info' && (
+            <SectionCard title="Información de Aplicación" icon={Info}>
+              <div className="flex flex-col items-center justify-center py-10">
+                <div className="bg-blue-600 p-6 rounded-3xl shadow-2xl mb-8"><Zap className="w-16 h-16 text-white" /></div>
+                <h2 className="text-3xl font-black mb-2">Transformer<span className="text-blue-600">Pro</span></h2>
+                <p className="text-gray-500 font-bold uppercase tracking-widest text-xs mb-10">Software de Cálculo y Dimensionamiento</p>
+                <div className="w-full max-w-md bg-gray-50 dark:bg-gray-800/50 p-6 rounded-2xl border border-gray-100 dark:border-gray-700">
+                  <div className="flex items-center gap-3 mb-4"><User className="w-5 h-5 text-blue-600" /><h3 className="font-black text-sm uppercase tracking-wider">Desarrolladores del Programa</h3></div>
+                  <ul className="space-y-4">
+                    <li className="flex flex-col"><span className="text-lg font-bold text-gray-900 dark:text-gray-100">Esp. Sup. Téc. Froilán Cori C.</span><span className="text-xs font-bold text-blue-500 uppercase">Sistemas Eléctricos</span></li>
+                    <div className="h-px bg-gray-100 dark:bg-gray-700 w-full"></div>
+                    <li className="flex flex-col"><span className="text-lg font-bold text-gray-900 dark:text-gray-100">Univ. Beymar Flores S.</span><span className="text-xs font-bold text-blue-500 uppercase">Cálculo y Desarrollo Algorítmico</span></li>
+                  </ul>
+                </div>
+                <p className="text-[10px] text-gray-400 font-bold uppercase tracking-[0.2em] mt-10">Versión 2.3.0 • La Paz - Bolivia</p>
+              </div>
+            </SectionCard>
+          )}
+
+          <footer className="print-only mt-20 border-t border-gray-200 pt-10 avoid-break">
+            <div className="grid grid-cols-2 gap-20">
+              <div className="text-center"><div className="h-px w-48 bg-gray-400 mx-auto mb-4"></div><p className="text-xs font-bold uppercase">Firma del Profesional Responsable</p></div>
+              <div className="text-center"><div className="h-px w-48 bg-gray-400 mx-auto mb-4"></div><p className="text-xs font-bold uppercase">Aprobación Técnica / Entidad</p></div>
+            </div>
+            <p className="text-[8px] text-gray-400 text-center mt-20 font-bold uppercase tracking-widest">
+              Memoria generada por: Esp. Froilán Cori C. & Univ. Beymar Flores S. - {new Date().toLocaleDateString()}
+            </p>
+          </footer>
+
+          {activeTab === 'reporte' && (
+            <div className="no-print flex flex-col items-center gap-4 mt-8 bg-white dark:bg-gray-900 p-12 rounded-3xl border border-blue-100 dark:border-blue-900/30">
+              <Printer className="w-12 h-12 text-blue-600 mb-2" />
+              <div className="text-center">
+                <h3 className="text-2xl font-black">Reporte Final de Ingeniería</h3>
+                <p className="text-gray-500 text-sm mt-2">La memoria técnica está lista para ser descargada como documento PDF.</p>
+              </div>
+              <button onClick={handlePrint} disabled={isGeneratingPdf}
+                className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white px-10 py-4 rounded-2xl font-black text-lg shadow-xl shadow-blue-600/30 transition-all mt-4 flex items-center justify-center gap-2 w-full max-w-sm">
+                {isGeneratingPdf ? 'GENERANDO ARCHIVO PDF...' : 'DESCARGAR MEMORIA TÉCNICA PDF'}
+              </button>
+            </div>
+          )}
+
+        </main>
+      </div>
+    </div>
+  );
+}
