@@ -1,0 +1,72 @@
+name: Build TransformerPro APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: transformerpro/package-lock.json
+
+      - name: Configurar Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Instalar dependencias
+        working-directory: transformerpro
+        run: npm install
+
+      - name: Build React
+        working-directory: transformerpro
+        run: npm run build
+
+      - name: Instalar Capacitor
+        working-directory: transformerpro
+        run: npm install @capacitor/core @capacitor/cli @capacitor/android
+
+      - name: Inicializar Capacitor
+        working-directory: transformerpro
+        run: |
+          if [ ! -f "capacitor.config.json" ]; then
+            npx cap init "TransformerPro" "com.transformerpro.app" --web-dir=dist
+          fi
+
+      - name: Añadir Android
+        working-directory: transformerpro
+        run: |
+          if [ ! -d "android" ]; then
+            npx cap add android
+          fi
+
+      - name: Sincronizar Capacitor
+        working-directory: transformerpro
+        run: npx cap sync android
+
+      - name: Permisos Gradle
+        working-directory: transformerpro
+        run: chmod +x android/gradlew
+
+      - name: Compilar APK
+        working-directory: transformerpro/android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Subir APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: TransformerPro-debug
+          path: transformerpro/android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30
