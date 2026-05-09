@@ -126,7 +126,7 @@ export default function TransformerPro() {
     document.body.appendChild(s1);
   };
 
-  const generatePDF = () => {
+  const generatePDF = async () => {
     try {
       const { jsPDF } = window.jspdf;
       const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
@@ -280,7 +280,33 @@ export default function TransformerPro() {
         doc.text('Pagina ' + i + ' de ' + pageCount, W - margin, 287, { align: 'right' });
       }
 
-const pdfBase64 = doc.output('datauristring');
+const pdfBase64 = doc.output('datauristring').split(',')[1];
+const fileName = 'Memoria_Tecnica_' + (project.name || 'Proyecto') + '.pdf';
+
+if (window.Capacitor && window.Capacitor.isNativePlatform()) {
+  const { Filesystem, Directory } = await import('@capacitor/filesystem');
+  const { Share } = await import('@capacitor/share');
+  await Filesystem.writeFile({
+    path: fileName,
+    data: pdfBase64,
+    directory: Directory.Cache,
+  });
+  const fileUri = await Filesystem.getUri({
+    path: fileName,
+    directory: Directory.Cache,
+  });
+  await Share.share({
+    title: 'Memoria Técnica PDF',
+    url: fileUri.uri,
+    dialogTitle: 'Guardar o compartir PDF',
+  });
+} else {
+  const linkSource = 'data:application/pdf;base64,' + pdfBase64;
+  const a = document.createElement('a');
+  a.href = linkSource;
+  a.download = fileName;
+  a.click();
+}
 const newWindow = window.open();
 if (newWindow) {
   newWindow.document.write(
